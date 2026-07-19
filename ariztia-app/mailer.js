@@ -18,6 +18,12 @@ function makeTransport() {
   });
 }
 
+// Responsables de un ítem (lista). Acepta también el formato antiguo assigneeId.
+function assigneeIdsOf(item) {
+  if (Array.isArray(item.assigneeIds)) return item.assigneeIds;
+  return item.assigneeId != null ? [item.assigneeId] : [];
+}
+
 // Ítems no terminados que vencieron o vencen en los próximos N días (por defecto 3)
 function dueItems(db) {
   const horizon = Number(process.env.ALERT_DAYS || 3);
@@ -49,17 +55,22 @@ async function sendAlertEmails(db) {
   if (!smtpConfigured()) {
     console.log("[alertas] SMTP no configurado (.env). Correos que se habrían enviado:");
     items.forEach((it) => {
-      const u = db.users.find((x) => x.id === it.assigneeId);
-      console.log(`  → ${u ? u.email : "sin responsable"}: ${it.key} "${it.title}" ${daysLabel(it.endDate)}`);
+      const emails = assigneeIdsOf(it)
+        .map((id) => db.users.find((x) => x.id === id))
+        .filter(Boolean)
+        .map((u) => u.email);
+      console.log(`  → ${emails.length ? emails.join(", ") : "sin responsable"}: ${it.key} "${it.title}" ${daysLabel(it.endDate)}`);
     });
     return { sent: 0, message: "SMTP no configurado. Revisa el archivo .env (ver .env.example). Los correos pendientes se listaron en la consola del servidor." };
   }
 
-  // Agrupar por responsable: un solo correo por persona
+  // Agrupar por responsable: un solo correo por persona.
+  // Si un ítem tiene varios responsables, aparece en el correo de cada uno.
   const byUser = {};
   for (const it of items) {
-    if (!it.assigneeId) continue;
-    (byUser[it.assigneeId] ||= []).push(it);
+    for (const uid of assigneeIdsOf(it)) {
+      (byUser[uid] ||= []).push(it);
+    }
   }
 
   const transport = makeTransport();

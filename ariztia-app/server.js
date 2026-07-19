@@ -20,6 +20,7 @@ let db;
 function load() {
   if (fs.existsSync(DATA_FILE)) {
     db = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
+    migrate();
   } else {
     // Primera ejecución: crear admin inicial
     db = {
@@ -39,6 +40,21 @@ function load() {
     save();
     console.log("Base de datos creada. Admin inicial: fveas@ariztia.com");
     console.log("IMPORTANTE: cambia la contraseña del admin después del primer ingreso.");
+  }
+}
+// Migración: responsable único (assigneeId) → lista de responsables (assigneeIds)
+function migrate() {
+  let changed = false;
+  (db.items || []).forEach((it) => {
+    if (!Array.isArray(it.assigneeIds)) {
+      it.assigneeIds = it.assigneeId != null ? [it.assigneeId] : [];
+      delete it.assigneeId;
+      changed = true;
+    }
+  });
+  if (changed) {
+    save();
+    console.log("Migración aplicada: los ítems ahora admiten múltiples responsables (assigneeIds).");
   }
 }
 function save() {
@@ -126,6 +142,17 @@ function validateItem(body, isNew) {
   return errors;
 }
 
+// Normaliza una lista de responsables: números únicos que correspondan a usuarios existentes.
+// Acepta también el formato antiguo (assigneeId único) por compatibilidad.
+function cleanAssigneeIds(body) {
+  let raw;
+  if (Array.isArray(body.assigneeIds)) raw = body.assigneeIds;
+  else if (body.assigneeId !== undefined) raw = body.assigneeId != null ? [body.assigneeId] : [];
+  else return undefined; // no se envió el campo: no modificar
+  const ids = [...new Set(raw.map(Number).filter((n) => Number.isFinite(n)))];
+  return ids.filter((n) => db.users.some((u) => u.id === n));
+}
+
 app.post("/api/items", requireAuth, (req, res) => {
   const b = req.body || {};
   const errors = validateItem(b, true);
@@ -149,7 +176,7 @@ app.post("/api/items", requireAuth, (req, res) => {
     title: String(b.title).trim(),
     desc: b.desc || "",
     status: b.status || "todo",
-    assigneeId: b.assigneeId || null,
+    assigneeIds: cleanAssigneeIds(b) || [],
     priority: b.priority || "media",
     startDate: b.startDate || "",
     endDate: b.endDate || "",
@@ -166,9 +193,11 @@ app.put("/api/items/:id", requireAuth, (req, res) => {
   const b = req.body || {};
   const errors = validateItem({ ...item, ...b }, false);
   if (errors.length) return res.status(400).json({ error: errors.join(" ") });
-  ["title", "desc", "status", "assigneeId", "priority", "startDate", "endDate"].forEach((k) => {
+  ["title", "desc", "status", "priority", "startDate", "endDate"].forEach((k) => {
     if (b[k] !== undefined) item[k] = k === "title" ? String(b[k]).trim() : b[k];
   });
+  const ids = cleanAssigneeIds(b);
+  if (ids !== undefined) item.assigneeIds = ids;
   save();
   res.json({ item });
 });
@@ -221,6 +250,10 @@ app.delete("/api/users/:id", requireAuth, requireAdmin, (req, res) => {
   const before = db.users.length;
   db.users = db.users.filter((u) => u.id !== id);
   if (db.users.length === before) return res.status(404).json({ error: "Usuario no encontrado." });
+  // Quitar al usuario eliminado de los responsables de todos los ítems
+  db.items.forEach((it) => {
+    if (Array.isArray(it.assigneeIds)) it.assigneeIds = it.assigneeIds.filter((x) => x !== id);
+  });
   save();
   res.json({ ok: true });
 });

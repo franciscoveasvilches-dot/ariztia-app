@@ -65,6 +65,12 @@ const daysLeftLabel = (item) => {
   return `vence en ${diff} día${diff === 1 ? "" : "s"}`;
 };
 
+// ---------- Responsables (soporta varios por ítem) ----------
+const assigneeIdsOf = (item) =>
+  Array.isArray(item.assigneeIds) ? item.assigneeIds : item.assigneeId != null ? [item.assigneeId] : [];
+const assigneesOf = (item, users) =>
+  assigneeIdsOf(item).map((id) => users.find((u) => u.id === id)).filter(Boolean);
+
 // ---------- Componentes pequeños ----------
 function TypeChip({ type }) {
   const t = TYPES[type];
@@ -119,6 +125,36 @@ function Avatar({ user, size = 24 }) {
       display: "inline-flex", alignItems: "center", justifyContent: "center",
       fontSize: size * 0.42, fontWeight: 700,
     }}>{initials}</span>
+  );
+}
+
+function AvatarGroup({ users: list, size = 24, max = 3 }) {
+  if (!list || list.length === 0) {
+    return <span style={{ width: size, height: size, borderRadius: "50%", background: C.line, display: "inline-block", flexShrink: 0 }} title="Sin responsable" />;
+  }
+  const shown = list.slice(0, max);
+  const extra = list.length - shown.length;
+  return (
+    <span title={list.map((u) => u.name).join(", ")} style={{ display: "inline-flex", alignItems: "center", flexShrink: 0 }}>
+      {shown.map((u, i) => (
+        <span key={u.id} style={{
+          marginLeft: i === 0 ? 0 : -Math.round(size * 0.35),
+          display: "inline-flex", borderRadius: "50%",
+          border: "2px solid #fff", zIndex: shown.length - i, position: "relative",
+        }}>
+          <Avatar user={u} size={size} />
+        </span>
+      ))}
+      {extra > 0 && (
+        <span style={{
+          marginLeft: -Math.round(size * 0.35), width: size, height: size, borderRadius: "50%",
+          background: C.inkSoft, color: "#fff", display: "inline-flex",
+          alignItems: "center", justifyContent: "center",
+          fontSize: size * 0.4, fontWeight: 700, border: "2px solid #fff",
+          position: "relative", zIndex: 0, boxSizing: "content-box",
+        }}>+{extra}</span>
+      )}
+    </span>
   );
 }
 
@@ -223,7 +259,7 @@ function ItemModal({ mode, item, parent, users, onSave, onClose, onDelete }) {
   const [title, setTitle] = useState(item?.title || "");
   const [desc, setDesc] = useState(item?.desc || "");
   const [status, setStatus] = useState(item?.status || "todo");
-  const [assigneeId, setAssigneeId] = useState(item?.assigneeId || users[0]?.id);
+  const [assigneeIds, setAssigneeIds] = useState(item ? assigneeIdsOf(item) : []);
   const [priority, setPriority] = useState(item?.priority || "media");
   const [startDate, setStartDate] = useState(item?.startDate || "");
   const [endDate, setEndDate] = useState(item?.endDate || "");
@@ -231,6 +267,9 @@ function ItemModal({ mode, item, parent, users, onSave, onClose, onDelete }) {
   const [busy, setBusy] = useState(false);
   const type = item?.type || (parent ? TYPES[parent.type].child : "historia");
   const t = TYPES[type];
+
+  const toggleAssignee = (id) =>
+    setAssigneeIds((arr) => (arr.includes(id) ? arr.filter((x) => x !== id) : [...arr, id]));
 
   const save = async () => {
     if (!title.trim()) return;
@@ -240,7 +279,7 @@ function ItemModal({ mode, item, parent, users, onSave, onClose, onDelete }) {
     setBusy(true); setError("");
     try {
       await onSave({
-        title: title.trim(), desc, status, assigneeId: Number(assigneeId), priority, startDate, endDate,
+        title: title.trim(), desc, status, assigneeIds, priority, startDate, endDate,
         type, parentId: parent ? parent.id : item?.parentId ?? null,
       });
     } catch (e) {
@@ -289,15 +328,10 @@ function ItemModal({ mode, item, parent, users, onSave, onClose, onDelete }) {
             <input style={inputStyle} type="date" value={endDate} onChange={(e) => { setEndDate(e.target.value); setError(""); }} />
           </Field>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
           <Field label="Estado">
             <select style={inputStyle} value={status} onChange={(e) => setStatus(e.target.value)}>
               {Object.entries(STATUSES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-            </select>
-          </Field>
-          <Field label="Responsable">
-            <select style={inputStyle} value={assigneeId} onChange={(e) => setAssigneeId(Number(e.target.value))}>
-              {users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
             </select>
           </Field>
           <Field label="Prioridad">
@@ -306,6 +340,31 @@ function ItemModal({ mode, item, parent, users, onSave, onClose, onDelete }) {
             </select>
           </Field>
         </div>
+        <Field label={`Responsables (${assigneeIds.length} seleccionado${assigneeIds.length === 1 ? "" : "s"})`}>
+          <div style={{
+            border: "1px solid " + C.line, borderRadius: 7, maxHeight: 150,
+            overflowY: "auto", padding: 5, background: "#fff",
+          }}>
+            {users.length === 0 && (
+              <p style={{ margin: 0, padding: 8, fontSize: 12.5, color: C.inkSoft }}>No hay usuarios disponibles.</p>
+            )}
+            {users.map((u) => {
+              const checked = assigneeIds.includes(u.id);
+              return (
+                <label key={u.id} style={{
+                  display: "flex", alignItems: "center", gap: 9, padding: "6px 8px",
+                  borderRadius: 6, cursor: "pointer", marginBottom: 1,
+                  background: checked ? C.accentSoft : "transparent",
+                }}>
+                  <input type="checkbox" checked={checked} onChange={() => toggleAssignee(u.id)}
+                    style={{ accentColor: C.accent, cursor: "pointer" }} />
+                  <Avatar user={u} size={22} />
+                  <span style={{ fontSize: 13.5, color: C.ink, fontWeight: checked ? 600 : 400 }}>{u.name}</span>
+                </label>
+              );
+            })}
+          </div>
+        </Field>
         {error && <p style={{ color: C.danger, fontSize: 12.5, marginTop: -4, marginBottom: 10 }}>{error}</p>}
         <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8 }}>
           <div>
@@ -324,7 +383,7 @@ function ItemModal({ mode, item, parent, users, onSave, onClose, onDelete }) {
 // ---------- Fila del árbol ----------
 function TreeRow({ item, depth, users, childrenCount, expanded, onToggle, onAddChild, onEdit, onStatus }) {
   const t = TYPES[item.type];
-  const user = users.find((u) => u.id === item.assigneeId);
+  const assignees = assigneesOf(item, users);
   const pr = PRIORITIES[item.priority];
   return (
     <div
@@ -359,7 +418,7 @@ function TreeRow({ item, depth, users, childrenCount, expanded, onToggle, onAddC
       <DueBadge item={item} />
       <span title={"Prioridad " + pr.label} style={{ color: pr.color, fontWeight: 800, fontSize: 14, flexShrink: 0 }}>{pr.icon}</span>
       <StatusPill status={item.status} onChange={(s) => onStatus(item.id, s)} />
-      <Avatar user={user} />
+      <AvatarGroup users={assignees} />
       {t.child && (
         <button
           onClick={(e) => { e.stopPropagation(); onAddChild(item); }}
@@ -605,7 +664,7 @@ function BoardView({ items, users, onStatus, onEdit }) {
                 <span style={{ fontSize: 12, color: C.inkSoft }}>{col.length}</span>
               </div>
               {col.map((it) => {
-                const user = users.find((u) => u.id === it.assigneeId);
+                const assignees = assigneesOf(it, users);
                 const pr = PRIORITIES[it.priority];
                 return (
                   <div key={it.id} draggable
@@ -624,7 +683,7 @@ function BoardView({ items, users, onStatus, onEdit }) {
                       <span style={{ fontSize: 11.5, color: C.inkSoft, fontWeight: 600, flex: 1 }}>{it.key}</span>
                       <DueBadge item={it} />
                       <span style={{ color: pr.color, fontWeight: 800, fontSize: 13 }}>{pr.icon}</span>
-                      <Avatar user={user} size={20} />
+                      <AvatarGroup users={assignees} size={20} />
                     </div>
                   </div>
                 );
@@ -682,7 +741,7 @@ function AlertsView({ items, users, currentUser, onEdit }) {
             Todo al día: no hay tareas vencidas ni próximas a vencer. ✓
           </p>
         ) : alertItems.map((it) => {
-          const user = users.find((u) => u.id === it.assigneeId);
+          const assignees = assigneesOf(it, users);
           const st = dueState(it);
           return (
             <div key={it.id} onClick={() => onEdit(it)} style={{
@@ -696,9 +755,10 @@ function AlertsView({ items, users, currentUser, onEdit }) {
                   {it.key} · {it.title}
                 </div>
                 <div style={{ fontSize: 12.5, color: st === "overdue" ? C.accent : C.warn, fontWeight: 600 }}>
-                  {daysLeftLabel(it)} · responsable: {user?.name || "sin asignar"}
+                  {daysLeftLabel(it)} · {assignees.length > 1 ? "responsables" : "responsable"}: {assignees.map((u) => u.name).join(", ") || "sin asignar"}
                 </div>
               </div>
+              <AvatarGroup users={assignees} size={22} />
               <DueBadge item={it} />
             </div>
           );
