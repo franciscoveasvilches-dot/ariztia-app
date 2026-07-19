@@ -1,0 +1,26 @@
+{
+  "name": "ariztia-gestion-proyectos",
+  "version": "1.0.0",
+  "description": "Gestion de proyectos Ariztia: historias, epicas, tareas y subtareas",
+  "main": "index.js",
+  "scripts": {
+    "start": "node server.js",
+    "build": "esbuild src/app.jsx --bundle --minify --outfile=public/app.js --loader:.jsx=jsx --define:process.env.NODE_ENV='\"production\"'"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "express-session": "^1.19.0",
+    "node-cron": "^4.6.0",
+    "nodemailer": "^9.0.3"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.1",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  }
+}
