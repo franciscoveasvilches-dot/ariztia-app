@@ -71,6 +71,23 @@ const assigneeIdsOf = (item) =>
 const assigneesOf = (item, users) =>
   assigneeIdsOf(item).map((id) => users.find((u) => u.id === id)).filter(Boolean);
 
+// Filtra los ítems asignados a una persona, conservando sus padres para no perder la jerarquía
+function filterByAssignee(items, uid) {
+  if (uid === "all") return items;
+  const id = Number(uid);
+  const byParent = {};
+  items.forEach((it) => { (byParent[it.parentId ?? "root"] ||= []).push(it); });
+  const keep = new Set();
+  const walk = (it) => {
+    let anyChild = false;
+    (byParent[it.id] || []).forEach((c) => { if (walk(c)) anyChild = true; });
+    if (assigneeIdsOf(it).includes(id) || anyChild) { keep.add(it.id); return true; }
+    return false;
+  };
+  (byParent["root"] || []).forEach(walk);
+  return items.filter((it) => keep.has(it.id));
+}
+
 // ---------- Componentes pequeños ----------
 function TypeChip({ type }) {
   const t = TYPES[type];
@@ -381,7 +398,7 @@ function ItemModal({ mode, item, parent, users, onSave, onClose, onDelete }) {
 }
 
 // ---------- Fila del árbol ----------
-function TreeRow({ item, depth, users, childrenCount, expanded, onToggle, onAddChild, onEdit, onStatus }) {
+function TreeRow({ item, depth, users, childrenCount, expanded, onToggle, onAddChild, onEdit, onStatus, isAdmin, onMove }) {
   const t = TYPES[item.type];
   const assignees = assigneesOf(item, users);
   const pr = PRIORITIES[item.priority];
@@ -419,6 +436,14 @@ function TreeRow({ item, depth, users, childrenCount, expanded, onToggle, onAddC
       <span title={"Prioridad " + pr.label} style={{ color: pr.color, fontWeight: 800, fontSize: 14, flexShrink: 0 }}>{pr.icon}</span>
       <StatusPill status={item.status} onChange={(s) => onStatus(item.id, s)} />
       <AvatarGroup users={assignees} />
+      {isAdmin && (
+        <span style={{ display: "inline-flex", flexDirection: "column", gap: 1, flexShrink: 0 }}>
+          <button onClick={(e) => { e.stopPropagation(); onMove(item.id, "up"); }} title="Subir"
+            style={{ border: "1px solid " + C.line, background: "#fff", borderRadius: 4, width: 18, height: 13, cursor: "pointer", color: C.inkSoft, fontSize: 7, lineHeight: 1, padding: 0 }}>▲</button>
+          <button onClick={(e) => { e.stopPropagation(); onMove(item.id, "down"); }} title="Bajar"
+            style={{ border: "1px solid " + C.line, background: "#fff", borderRadius: 4, width: 18, height: 13, cursor: "pointer", color: C.inkSoft, fontSize: 7, lineHeight: 1, padding: 0 }}>▼</button>
+        </span>
+      )}
       {t.child && (
         <button
           onClick={(e) => { e.stopPropagation(); onAddChild(item); }}
@@ -570,27 +595,36 @@ function GanttView({ items, onEdit }) {
 }
 
 // ---------- Vista Backlog ----------
-function BacklogView({ items, users, onAddRoot, onAddChild, onEdit, onStatus }) {
-  const [collapsed, setCollapsed] = useState({});
+function BacklogView({ items, users, isAdmin, filterUser, onFilterUser, onAddRoot, onAddChild, onEdit, onStatus, onMove }) {
+  // Por defecto todo comprimido: se ve solo el nivel de historias
+  const [expandedMap, setExpandedMap] = useState({});
   const [mode, setMode] = useState("list");
+  const filterActive = filterUser !== "all";
   const byParent = useMemo(() => {
     const m = {};
     items.forEach((it) => { (m[it.parentId ?? "root"] ||= []).push(it); });
     return m;
   }, [items]);
 
-  const toggle = (id) => setCollapsed((c) => ({ ...c, [id]: !c[id] }));
+  const toggle = (id) => setExpandedMap((c) => ({ ...c, [id]: !c[id] }));
+  const expandAll = () => {
+    const m = {};
+    items.forEach((it) => { m[it.id] = true; });
+    setExpandedMap(m);
+  };
+  const collapseAll = () => setExpandedMap({});
 
   const renderBranch = (parentId, depth) => {
     const list = byParent[parentId ?? "root"] || [];
     return list.map((it) => {
       const kids = byParent[it.id] || [];
-      const expanded = !collapsed[it.id];
+      // Con un filtro de responsable activo se expande todo para mostrar sus tareas
+      const expanded = filterActive ? true : !!expandedMap[it.id];
       return (
         <div key={it.id}>
           <TreeRow item={it} depth={depth} users={users} childrenCount={kids.length}
             expanded={expanded} onToggle={toggle} onAddChild={onAddChild}
-            onEdit={onEdit} onStatus={onStatus} />
+            onEdit={onEdit} onStatus={onStatus} isAdmin={isAdmin} onMove={onMove} />
           {expanded && renderBranch(it.id, depth + 1)}
         </div>
       );
@@ -614,12 +648,35 @@ function BacklogView({ items, users, onAddRoot, onAddChild, onEdit, onStatus }) 
             Jerarquía: Historia → Épica → Tarea → Subtarea. Usa <b>+</b> en cada fila para crear el nivel siguiente.
           </p>
         </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <select value={filterUser} onChange={(e) => onFilterUser(e.target.value)}
+            style={{ ...inputStyle, width: "auto", padding: "7px 10px", fontSize: 13 }}>
+            <option value="all">👤 Todos los responsables</option>
+            {users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+          </select>
+          {mode === "list" && !filterActive && (
+            <>
+              <button style={tabStyle(false)} onClick={expandAll} title="Expandir todo">⊞</button>
+              <button style={tabStyle(false)} onClick={collapseAll} title="Contraer todo">⊟</button>
+            </>
+          )}
           <button style={tabStyle(mode === "list")} onClick={() => setMode("list")}>☰ Lista</button>
           <button style={tabStyle(mode === "gantt")} onClick={() => setMode("gantt")}>▤ Cronograma</button>
           <Btn onClick={onAddRoot}>+ Nueva historia</Btn>
         </div>
       </div>
+      {filterActive && (
+        <p style={{
+          background: C.accentSoft, color: C.accent, borderRadius: 8, padding: "8px 14px",
+          fontSize: 13, fontWeight: 600, marginTop: 0, marginBottom: 14,
+        }}>
+          Mostrando solo el trabajo de {users.find((u) => u.id === Number(filterUser))?.name || "—"}.{" "}
+          <button onClick={() => onFilterUser("all")} style={{
+            border: "none", background: "none", color: C.accent, cursor: "pointer",
+            fontWeight: 700, textDecoration: "underline", fontFamily: "inherit", fontSize: 13,
+          }}>Quitar filtro</button>
+        </p>
+      )}
       {mode === "gantt" ? (
         <GanttView items={items} onEdit={onEdit} />
       ) : (
@@ -636,19 +693,28 @@ function BacklogView({ items, users, onAddRoot, onAddChild, onEdit, onStatus }) 
 }
 
 // ---------- Vista Tablero ----------
-function BoardView({ items, users, onStatus, onEdit }) {
+function BoardView({ items, users, filterUser, onFilterUser, onStatus, onEdit }) {
   const [typeFilter, setTypeFilter] = useState("all");
   const [dragId, setDragId] = useState(null);
-  const filtered = items.filter((it) => typeFilter === "all" || it.type === typeFilter);
+  const filtered = items
+    .filter((it) => typeFilter === "all" || it.type === typeFilter)
+    .slice()
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
 
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
         <h2 style={{ margin: 0, fontSize: 20, fontFamily: "'Sora', sans-serif" }}>Tablero</h2>
-        <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} style={{ ...inputStyle, width: "auto" }}>
-          <option value="all">Todos los tipos</option>
-          {Object.entries(TYPES).map(([k, v]) => <option key={k} value={k}>{v.label}s</option>)}
-        </select>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <select value={filterUser} onChange={(e) => onFilterUser(e.target.value)} style={{ ...inputStyle, width: "auto" }}>
+            <option value="all">👤 Todos los responsables</option>
+            {users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+          </select>
+          <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} style={{ ...inputStyle, width: "auto" }}>
+            <option value="all">Todos los tipos</option>
+            {Object.entries(TYPES).map(([k, v]) => <option key={k} value={k}>{v.label}s</option>)}
+          </select>
+        </div>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 14 }}>
         {Object.entries(STATUSES).map(([sk, sv]) => {
@@ -904,11 +970,15 @@ function AriztiaApp() {
   const [modal, setModal] = useState(null);
   const [showPassword, setShowPassword] = useState(false);
   const [loadError, setLoadError] = useState("");
+  const [assigneeFilter, setAssigneeFilter] = useState("all");
 
   const refresh = async () => {
     const { users, items } = await api("/api/state");
+    items.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
     setUsers(users); setItems(items);
   };
+
+  const visibleItems = useMemo(() => filterByAssignee(items, assigneeFilter), [items, assigneeFilter]);
 
   // Restaurar sesión al cargar y refrescar datos cada 15 segundos
   useEffect(() => {
@@ -948,6 +1018,15 @@ function AriztiaApp() {
     await api(`/api/items/${id}`, "DELETE");
     await refresh();
     setModal(null);
+  };
+
+  const moveItem = async (id, direction) => {
+    try {
+      await api(`/api/items/${id}/move`, "PUT", { direction });
+      await refresh();
+    } catch (e) {
+      setLoadError(e.message);
+    }
   };
 
   const createUser = async (data) => {
@@ -1036,14 +1115,18 @@ function AriztiaApp() {
           </p>
         )}
         {view === "backlog" && (
-          <BacklogView items={items} users={users}
+          <BacklogView items={visibleItems} users={users}
+            isAdmin={currentUser.role === "admin"}
+            filterUser={assigneeFilter} onFilterUser={setAssigneeFilter}
             onAddRoot={() => setModal({ mode: "create", parent: null })}
             onAddChild={(parent) => setModal({ mode: "create", parent })}
             onEdit={(item) => setModal({ mode: "edit", item })}
-            onStatus={setStatus} />
+            onStatus={setStatus} onMove={moveItem} />
         )}
         {view === "board" && (
-          <BoardView items={items} users={users} onStatus={setStatus} onEdit={(item) => setModal({ mode: "edit", item })} />
+          <BoardView items={visibleItems} users={users}
+            filterUser={assigneeFilter} onFilterUser={setAssigneeFilter}
+            onStatus={setStatus} onEdit={(item) => setModal({ mode: "edit", item })} />
         )}
         {view === "alerts" && (
           <AlertsView items={items} users={users} currentUser={currentUser} onEdit={(item) => setModal({ mode: "edit", item })} />

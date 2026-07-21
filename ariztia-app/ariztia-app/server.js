@@ -42,7 +42,9 @@ function load() {
     console.log("IMPORTANTE: cambia la contraseña del admin después del primer ingreso.");
   }
 }
-// Migración: responsable único (assigneeId) → lista de responsables (assigneeIds)
+// Migraciones de datos:
+// 1) responsable único (assigneeId) → lista de responsables (assigneeIds)
+// 2) campo "order" para ordenar ítems entre sus pares
 function migrate() {
   let changed = false;
   (db.items || []).forEach((it) => {
@@ -52,9 +54,17 @@ function migrate() {
       changed = true;
     }
   });
+  const groups = {};
+  (db.items || []).forEach((it) => { (groups[it.parentId ?? "root"] ||= []).push(it); });
+  Object.values(groups).forEach((list) => {
+    if (list.some((it) => typeof it.order !== "number")) {
+      list.forEach((it, i) => { it.order = i; });
+      changed = true;
+    }
+  });
   if (changed) {
     save();
-    console.log("Migración aplicada: los ítems ahora admiten múltiples responsables (assigneeIds).");
+    console.log("Migración de datos aplicada (responsables múltiples y orden de ítems).");
   }
 }
 function save() {
@@ -168,6 +178,7 @@ app.post("/api/items", requireAuth, (req, res) => {
   }
   if (errors.length) return res.status(400).json({ error: errors.join(" ") });
 
+  const siblings = db.items.filter((i) => (i.parentId ?? null) === parentId);
   const item = {
     id: db.nextItemId,
     key: "ARZ-" + db.nextItemId,
@@ -180,6 +191,7 @@ app.post("/api/items", requireAuth, (req, res) => {
     priority: b.priority || "media",
     startDate: b.startDate || "",
     endDate: b.endDate || "",
+    order: siblings.length ? Math.max(...siblings.map((s) => s.order ?? 0)) + 1 : 0,
   };
   db.nextItemId++;
   db.items.push(item);
@@ -220,6 +232,27 @@ app.delete("/api/items/:id", requireAuth, (req, res) => {
   db.items = db.items.filter((i) => !toRemove.has(i.id));
   save();
   res.json({ removed: [...toRemove] });
+});
+
+// Reordenar un ítem entre sus pares (mismo padre). Solo admin.
+app.put("/api/items/:id/move", requireAuth, requireAdmin, (req, res) => {
+  const item = db.items.find((i) => i.id === Number(req.params.id));
+  if (!item) return res.status(404).json({ error: "Ítem no encontrado." });
+  const dir = (req.body || {}).direction;
+  if (dir !== "up" && dir !== "down") return res.status(400).json({ error: "Dirección inválida." });
+  // Hermanos (mismo padre) ordenados por su campo order
+  const siblings = db.items
+    .filter((i) => (i.parentId ?? null) === (item.parentId ?? null))
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  const idx = siblings.findIndex((i) => i.id === item.id);
+  const swapIdx = dir === "up" ? idx - 1 : idx + 1;
+  if (swapIdx < 0 || swapIdx >= siblings.length) return res.json({ ok: true }); // ya está en el extremo
+  // Intercambiar posiciones
+  siblings.splice(idx, 1);
+  siblings.splice(swapIdx, 0, item);
+  siblings.forEach((s, i) => { s.order = i; });
+  save();
+  res.json({ ok: true });
 });
 
 // ---------- Usuarios (solo admin) ----------
