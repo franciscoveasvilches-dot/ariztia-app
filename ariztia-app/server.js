@@ -62,6 +62,9 @@ function migrate() {
       changed = true;
     }
   });
+  (db.items || []).forEach((it) => {
+    if (typeof it.strategic !== "boolean") { it.strategic = false; changed = true; }
+  });
   if (changed) {
     save();
     console.log("Migración de datos aplicada (responsables múltiples y orden de ítems).");
@@ -191,6 +194,7 @@ app.post("/api/items", requireAuth, (req, res) => {
     priority: b.priority || "media",
     startDate: b.startDate || "",
     endDate: b.endDate || "",
+    strategic: false,
     order: siblings.length ? Math.max(...siblings.map((s) => s.order ?? 0)) + 1 : 0,
   };
   db.nextItemId++;
@@ -210,6 +214,13 @@ app.put("/api/items/:id", requireAuth, (req, res) => {
   });
   const ids = cleanAssigneeIds(b);
   if (ids !== undefined) item.assigneeIds = ids;
+  // Marcar como proyecto estratégico: solo administradores
+  if (b.strategic !== undefined) {
+    if (req.user.role !== "admin") {
+      return res.status(403).json({ error: "Solo un administrador puede marcar proyectos estratégicos." });
+    }
+    item.strategic = !!b.strategic;
+  }
   save();
   res.json({ item });
 });
@@ -289,6 +300,14 @@ app.delete("/api/users/:id", requireAuth, requireAdmin, (req, res) => {
   });
   save();
   res.json({ ok: true });
+});
+
+// ---------- Respaldo de la base de datos (solo admin) ----------
+app.get("/api/backup", requireAuth, requireAdmin, (req, res) => {
+  const stamp = new Date().toISOString().slice(0, 10);
+  res.setHeader("Content-Disposition", `attachment; filename="respaldo-ariztia-${stamp}.json"`);
+  res.setHeader("Content-Type", "application/json");
+  res.send(JSON.stringify(db, null, 2));
 });
 
 // ---------- Alertas por correo ----------

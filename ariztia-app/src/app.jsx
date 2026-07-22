@@ -100,6 +100,15 @@ function TypeChip({ type }) {
   );
 }
 
+function StrategicStar({ size = 14 }) {
+  return (
+    <span title="Proyecto estratégico" style={{
+      color: C.brandYellow, fontSize: size, lineHeight: 1, flexShrink: 0,
+      textShadow: "0 0 1px rgba(0,0,0,.35)",
+    }}>★</span>
+  );
+}
+
 function DueBadge({ item }) {
   const st = dueState(item);
   if (!item.endDate) return null;
@@ -272,12 +281,13 @@ function LoginScreen({ onLogin }) {
 }
 
 // ---------- Modal crear/editar ítem ----------
-function ItemModal({ mode, item, parent, users, onSave, onClose, onDelete }) {
+function ItemModal({ mode, item, parent, users, isAdmin, onSave, onClose, onDelete }) {
   const [title, setTitle] = useState(item?.title || "");
   const [desc, setDesc] = useState(item?.desc || "");
   const [status, setStatus] = useState(item?.status || "todo");
   const [assigneeIds, setAssigneeIds] = useState(item ? assigneeIdsOf(item) : []);
   const [priority, setPriority] = useState(item?.priority || "media");
+  const [strategic, setStrategic] = useState(!!item?.strategic);
   const [startDate, setStartDate] = useState(item?.startDate || "");
   const [endDate, setEndDate] = useState(item?.endDate || "");
   const [error, setError] = useState("");
@@ -298,6 +308,7 @@ function ItemModal({ mode, item, parent, users, onSave, onClose, onDelete }) {
       await onSave({
         title: title.trim(), desc, status, assigneeIds, priority, startDate, endDate,
         type, parentId: parent ? parent.id : item?.parentId ?? null,
+        ...(isAdmin ? { strategic } : {}),
       });
     } catch (e) {
       setError(e.message); setBusy(false);
@@ -382,6 +393,21 @@ function ItemModal({ mode, item, parent, users, onSave, onClose, onDelete }) {
             })}
           </div>
         </Field>
+        {isAdmin && (
+          <label style={{
+            display: "flex", alignItems: "center", gap: 9, padding: "10px 12px",
+            borderRadius: 8, cursor: "pointer", marginBottom: 14,
+            background: strategic ? "#FFF8E4" : "#FAF8F5",
+            border: "1px solid " + (strategic ? C.brandYellow : C.line),
+          }}>
+            <input type="checkbox" checked={strategic} onChange={(e) => setStrategic(e.target.checked)}
+              style={{ accentColor: C.brandYellow, cursor: "pointer" }} />
+            <StrategicStar size={17} />
+            <span style={{ fontSize: 13.5, color: C.ink, fontWeight: strategic ? 600 : 400 }}>
+              Proyecto estratégico de la empresa
+            </span>
+          </label>
+        )}
         {error && <p style={{ color: C.danger, fontSize: 12.5, marginTop: -4, marginBottom: 10 }}>{error}</p>}
         <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8 }}>
           <div>
@@ -424,6 +450,7 @@ function TreeRow({ item, depth, users, childrenCount, expanded, onToggle, onAddC
           transform: expanded ? "rotate(90deg)" : "none", transition: "transform .12s",
         }}
       >▶</button>
+      {item.strategic && <StrategicStar />}
       <TypeChip type={item.type} />
       <span style={{ fontSize: 12, color: C.inkSoft, fontWeight: 600, flexShrink: 0, width: 52 }}>{item.key}</span>
       <span style={{
@@ -549,6 +576,7 @@ function GanttView({ items, onEdit }) {
                   width: labelW, flexShrink: 0, padding: "0 12px 0 " + (12 + r.depth * 18) + "px",
                   display: "flex", alignItems: "center", gap: 7, overflow: "hidden",
                 }}>
+                  {r.strategic && <StrategicStar size={12} />}
                   <TypeChip type={r.type} />
                   <span style={{
                     fontSize: 13, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
@@ -745,6 +773,7 @@ function BoardView({ items, users, filterUser, onFilterUser, onStatus, onEdit })
                   >
                     <div style={{ fontSize: 13.5, color: C.ink, marginBottom: 8, lineHeight: 1.35 }}>{it.title}</div>
                     <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+                      {it.strategic && <StrategicStar size={13} />}
                       <TypeChip type={it.type} />
                       <span style={{ fontSize: 11.5, color: C.inkSoft, fontWeight: 600, flex: 1 }}>{it.key}</span>
                       <DueBadge item={it} />
@@ -815,6 +844,7 @@ function AlertsView({ items, users, currentUser, onEdit }) {
               borderBottom: "1px solid " + C.line, cursor: "pointer",
               borderLeft: "4px solid " + (st === "overdue" ? C.accent : C.warn),
             }}>
+              {it.strategic && <StrategicStar size={13} />}
               <TypeChip type={it.type} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 14, fontWeight: 600, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -865,7 +895,16 @@ function UsersView({ users, currentUser, onCreate, onDelete }) {
 
   return (
     <div>
-      <h2 style={{ margin: "0 0 16px", fontSize: 20, fontFamily: "'Sora', sans-serif" }}>Usuarios</h2>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 16 }}>
+        <h2 style={{ margin: 0, fontSize: 20, fontFamily: "'Sora', sans-serif" }}>Usuarios</h2>
+        <a href="/api/backup" download style={{
+          border: "1px solid " + C.line, background: "#fff", color: C.inkSoft,
+          borderRadius: 7, padding: "9px 16px", fontSize: 13.5, fontWeight: 600,
+          textDecoration: "none", display: "inline-block",
+        }} title="Descarga una copia completa de la base de datos">
+          ⤓ Descargar respaldo
+        </a>
+      </div>
       <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 340px) 1fr", gap: 18, alignItems: "start" }}>
         <div style={{ background: C.surface, border: "1px solid " + C.line, borderRadius: 12, padding: 20 }}>
           <h3 style={{ margin: "0 0 14px", fontSize: 15 }}>Crear usuario</h3>
@@ -1138,6 +1177,7 @@ function AriztiaApp() {
 
       {modal && (
         <ItemModal mode={modal.mode} item={modal.item} parent={modal.parent} users={users}
+          isAdmin={currentUser.role === "admin"}
           onSave={saveItem} onClose={() => setModal(null)} onDelete={deleteItem} />
       )}
       {showPassword && <PasswordModal onClose={() => setShowPassword(false)} />}
